@@ -10,7 +10,11 @@ code here. That limitation is surfaced via EXECUTION_CAPABILITIES.
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 import sys
+import urllib.error
+import urllib.request
 import os
 import resource
 import shutil
@@ -74,6 +78,69 @@ def _failure_summary(stdout: str, stderr: str, limit: int = 1200) -> str:
     parts.append("--- output tail ---")
     parts.append("\n".join(lines[-12:]))
     return "\n".join(parts)[-limit:]
+
+
+def _sanitize_requirements(files: dict[str, str]) -> dict[str, str]:
+    """Drop hallucinated packages, impossible pins and sdist-only packages.
+
+    Models sometimes invent package names (seen: "pcrypt==3.2.0") or versions that
+    were never published; pip then fails the whole install and the run dies before a
+    single test runs. Installs use --only-binary :all: (source builds hit free-tier
+    process limits), so sdist-only packages are unusable too. Check each requirement
+    against PyPI (fail-open on network errors): unknown or wheel-less packages are
+    removed, unknown versions are unpinned, each change recorded as a comment. If the
+    code truly imports a removed package the test run fails with a clear ImportError
+    the repair loop can fix.
+    """
+    reqs = files.get("requirements.txt")
+    if not reqs:
+        return files
+
+    def _wheel_listing(name: str) -> tuple[bool, set[str], set[str]]:
+        """(exists, versions_with_wheels, latest_version_tags) via PyPI JSON."""
+        with urllib.request.urlopen(f"https://pypi.org/pypi/{name}/json", timeout=6) as resp:
+            data = json.loads(resp.read())
+        wheeled = {v for v, fs in (data.get("releases") or {}).items()
+                   if any(f.get("packagetype") == "bdist_wheel" for f in fs)}
+        return True, wheeled, set()
+
+    kept: list[str] = []
+    changed = False
+    for line in reqs.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            kept.append(line)
+            continue
+        m = re.match(r"^([A-Za-z0-9_.\-]+)\s*==\s*([A-Za-z0-9_.!+\-]+)", stripped)
+        name = m.group(1) if m else re.split(r"[<>=!~\[ ;]", stripped, 1)[0]
+        pin = m.group(2) if m else None
+        try:
+            _, wheeled, _ = _wheel_listing(name)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                kept.append(f"# godmode: removed {stripped} (package not on PyPI)")
+                changed = True
+                continue
+            kept.append(line)
+            continue
+        except Exception:
+            kept.append(line)  # fail-open: never block an install on a check outage
+            continue
+        if not wheeled:
+            kept.append(f"# godmode: removed {stripped} (no binary wheel on PyPI; "
+                        f"source builds are not supported in this environment)")
+            changed = True
+        elif pin and pin not in wheeled:
+            kept.append(f"# godmode: unpinned {stripped} (no such version/wheel on PyPI)")
+            kept.append(name)
+            changed = True
+        else:
+            kept.append(line)
+    if not changed:
+        return files
+    files = dict(files)
+    files["requirements.txt"] = "\n".join(kept) + "\n"
+    return files
 
 
 def _ensure_implicit_requirements(files: dict[str, str]) -> dict[str, str]:
@@ -161,6 +228,7 @@ class Executor:
             return result
 
         files = _ensure_implicit_requirements(files)
+        files = _sanitize_requirements(files)
         venv_dir = tempfile.mkdtemp(prefix="gmvenv-")
         try:
             mk = subprocess.run([sys.executable, "-m", "venv", venv_dir],

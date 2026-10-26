@@ -92,8 +92,11 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
             "dependency or version conflict (ImportError, TypeError from a library "
             "client, build failure), fix it by outputting a corrected "
             "requirements.txt in fixed_files - never work around environment "
-            "conflicts in app code. Never claim tests pass without evidence; list "
-            "exactly what you verified."),
+            "conflicts in app code. If the failure says 'No matching distribution "
+            "found' or 'Could not find a version', the named package or version does "
+            "not exist on PyPI - replace it in requirements.txt with the real package "
+            "the code needs (for example bcrypt for password hashing). Never claim "
+            "tests pass without evidence; list exactly what you verified."),
         "schema": _schema({
             "test_files": FILES, "fixed_files": FILES,
             "verified": SA, "unverified": SA},
