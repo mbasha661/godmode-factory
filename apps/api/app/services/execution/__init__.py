@@ -224,8 +224,9 @@ class Executor:
         """
         has_reqs = install_requirements and "requirements.txt" in files
         if not has_reqs:
-            result = self.run(files, [sys.executable, "-m", "pytest", "-q", "--tb=short", "-rf"])
-            return result
+            runner = Executor(cpu_seconds=self.cpu_seconds, memory_mb=2048,
+                              wall_seconds=self.wall_seconds, max_file_mb=512)
+            return runner.run(files, [sys.executable, "-m", "pytest", "-q", "--tb=short", "-rf"])
 
         files = _ensure_implicit_requirements(files)
         files = _sanitize_requirements(files)
@@ -258,7 +259,9 @@ class Executor:
                                        stderr="dependency install failed: "
                                               + _failure_summary(dep.stdout, dep.stderr),
                                        duration_ms=dep.duration_ms, timed_out=dep.timed_out)
-            return self.run(files, [vpy, "-m", "pytest", "-q", "--tb=short", "-rf"])
+            runner = Executor(cpu_seconds=self.cpu_seconds, memory_mb=2048,
+                              wall_seconds=self.wall_seconds, max_file_mb=512)
+            return runner.run(files, [vpy, "-m", "pytest", "-q", "--tb=short", "-rf"])
         finally:
             shutil.rmtree(venv_dir, ignore_errors=True)
 
