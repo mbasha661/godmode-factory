@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from ..config import Settings
 from ..errors import ErrorCategory
-from .execution import Executor
+from .execution import Executor, _failure_summary
 from .providers.base import AIProvider, AIResponse, ProviderError
 
 TASK_SUCCEEDED = "succeeded"
@@ -219,8 +219,9 @@ class Orchestrator:
         await self._event(run["id"], run["project_id"], "tests_executed",
                           f"real pytest run: exit {result.exit_code}", level="info")
         if result.exit_code != 0:
-            tail = (result.stdout + "\n" + result.stderr)[-800:]
-            raise RuntimeError(f"real test run failed (exit {result.exit_code}): {tail}")
+            raise RuntimeError(
+                f"real test run failed (exit {result.exit_code}): "
+                + _failure_summary(result.stdout, result.stderr))
         return output
 
     async def _fail_task(self, run: dict, task: dict, agent_run: dict,

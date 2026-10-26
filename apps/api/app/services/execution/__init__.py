@@ -25,7 +25,7 @@ EXECUTION_CAPABILITIES = {
     "isolation": "restricted-subprocess",
     "secure_sandbox": False,
     "network_blocked": False,
-    "dependency_isolation": False,
+    "dependency_isolation": "per-run-venv",
     "limits": ["cpu_seconds", "memory_bytes", "wall_seconds", "max_files", "max_file_bytes"],
     "note": "Not a secure sandbox; suitable only for model-generated code in this system.",
 }
@@ -54,6 +54,26 @@ def _limits(cpu_seconds: int, memory_bytes: int, max_file_bytes: int) -> None:
         resource.setrlimit(resource.RLIMIT_NPROC, (256, 256))
     except (ValueError, OSError):
         pass
+
+
+def _failure_summary(stdout: str, stderr: str, limit: int = 1200) -> str:
+    """Extract the decision-relevant lines from pytest output.
+
+    Pytest prints the failure details long before the trailing warnings summary, so a
+    plain tail of the output shows only warnings - which is exactly what blinded the
+    test_repair loop. Key error/FAILED lines come first so they survive truncation to
+    the 500-char error_summary stored on the task.
+    """
+    combined = (stdout or "") + "\n" + (stderr or "")
+    lines = combined.splitlines()
+    key = [l for l in lines
+           if l.startswith(("E ", "E\t", "FAILED", "ERROR", "ImportError", "Traceback"))]
+    parts = []
+    if key:
+        parts.append("\n".join(key[-12:]))
+    parts.append("--- output tail ---")
+    parts.append("\n".join(lines[-12:]))
+    return "\n".join(parts)[-limit:]
 
 
 def _ensure_implicit_requirements(files: dict[str, str]) -> dict[str, str]:
@@ -128,19 +148,51 @@ class Executor:
     def run_tests(self, files: dict[str, str], install_requirements: bool = True) -> ExecutionResult:
         """Write a generated app, install its declared requirements, run its real pytest suite.
 
-        Dependencies install into the current (dedicated) environment; honest limitation:
-        no per-run dependency isolation. Recorded in EXECUTION_CAPABILITIES.
+        When the app declares requirements, they install into a per-run virtualenv
+        (isolated from the API's own environment, so generated pins can never downgrade
+        the service). Tooling (pytest, httpx) is installed first and the generated
+        requirements second, so the generated app's pins always win. Apps without a
+        requirements.txt run against the current environment (recorded in
+        EXECUTION_CAPABILITIES).
         """
-        if install_requirements and "requirements.txt" in files:
-            files = _ensure_implicit_requirements(files)
+        has_reqs = install_requirements and "requirements.txt" in files
+        if not has_reqs:
+            result = self.run(files, [sys.executable, "-m", "pytest", "-q", "--tb=short", "-rf"])
+            return result
+
+        files = _ensure_implicit_requirements(files)
+        venv_dir = tempfile.mkdtemp(prefix="gmvenv-")
+        try:
+            mk = subprocess.run([sys.executable, "-m", "venv", venv_dir],
+                                capture_output=True, text=True, timeout=180)
+            if mk.returncode != 0:
+                return ExecutionResult(command=["python", "-m", "venv"], exit_code=mk.returncode,
+                                       stdout=mk.stdout, stderr="venv creation failed: " + mk.stderr,
+                                       duration_ms=0, timed_out=False)
+            vpy = os.path.join(venv_dir, "bin", "python")
+            tooling = Executor(cpu_seconds=240, wall_seconds=240, max_file_mb=512)
+            tool = tooling.run({}, [vpy, "-m", "pip", "install", "-q",
+                                    "--disable-pip-version-check", "--only-binary", ":all:",
+                                    "pytest", "httpx"])
+            if tool.exit_code != 0:
+                return ExecutionResult(command=tool.command, exit_code=tool.exit_code,
+                                       stdout=tool.stdout,
+                                       stderr="test tooling install failed: " + tool.stderr,
+                                       duration_ms=tool.duration_ms, timed_out=tool.timed_out)
             installer = Executor(cpu_seconds=240, wall_seconds=300, max_file_mb=512)
-            dep = installer.run(files, [sys.executable, "-m", "pip", "install", "-q",
-                                        "--disable-pip-version-check", "-r", "requirements.txt"])
+            dep = installer.run({"requirements.txt": files["requirements.txt"]},
+                                [vpy, "-m", "pip", "install", "-q",
+                                 "--disable-pip-version-check", "--only-binary", ":all:",
+                                 "-r", "requirements.txt"])
             if dep.exit_code != 0:
                 return ExecutionResult(command=dep.command, exit_code=dep.exit_code,
-                                       stdout=dep.stdout, stderr="dependency install failed: " + dep.stderr,
+                                       stdout=dep.stdout,
+                                       stderr="dependency install failed: "
+                                              + _failure_summary(dep.stdout, dep.stderr),
                                        duration_ms=dep.duration_ms, timed_out=dep.timed_out)
-        return self.run(files, [sys.executable, "-m", "pytest", "-q", "--tb=short"])
+            return self.run(files, [vpy, "-m", "pytest", "-q", "--tb=short", "-rf"])
+        finally:
+            shutil.rmtree(venv_dir, ignore_errors=True)
 
     def package(self, files: dict[str, str], out_zip: str) -> tuple[str, str]:
         """Zip the workspace files; returns (path, sha256)."""
