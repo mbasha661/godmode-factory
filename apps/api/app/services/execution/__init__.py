@@ -56,6 +56,25 @@ def _limits(cpu_seconds: int, memory_bytes: int, max_file_bytes: int) -> None:
         pass
 
 
+def _ensure_implicit_requirements(files: dict[str, str]) -> dict[str, str]:
+    """Add packages the generated code implicitly needs but the model forgot to declare.
+
+    Currently: pydantic's EmailStr requires the email-validator package at import time;
+    generated backends use EmailStr often enough that relying on the model to declare it
+    makes test_repair burn repair attempts on a deterministic gap.
+    """
+    reqs = files.get("requirements.txt", "")
+    uses_email = any(
+        "EmailStr" in content
+        for name, content in files.items()
+        if name.endswith(".py")
+    )
+    if uses_email and "email-validator" not in reqs and "pydantic[email]" not in reqs:
+        files = dict(files)
+        files["requirements.txt"] = reqs.rstrip("\n") + "\nemail-validator\n"
+    return files
+
+
 class Executor:
     def __init__(self, cpu_seconds: int = 60, memory_mb: int = 512, wall_seconds: int = 120,
                  max_file_mb: int = 5):
@@ -113,6 +132,7 @@ class Executor:
         no per-run dependency isolation. Recorded in EXECUTION_CAPABILITIES.
         """
         if install_requirements and "requirements.txt" in files:
+            files = _ensure_implicit_requirements(files)
             installer = Executor(cpu_seconds=240, wall_seconds=300, max_file_mb=512)
             dep = installer.run(files, [sys.executable, "-m", "pip", "install", "-q",
                                         "--disable-pip-version-check", "-r", "requirements.txt"])
