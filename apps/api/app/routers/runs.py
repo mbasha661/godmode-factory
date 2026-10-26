@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends
 from ..auth import AuthUser, get_current_user
 from ..config import Settings, get_settings
 from ..db import get_db
-from ..errors import not_found
+from ..errors import conflict, not_found
 from ..services.agents import execute_agent
-from ..services.orchestrator import Orchestrator
+from ..services.orchestrator import Orchestrator, utcnow
 from ..services.providers import build_provider
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -69,17 +69,42 @@ async def step_run(run_id: str, user: AuthUser = Depends(get_current_user),
     return await _orchestrator(settings).step(run_id)
 
 
+# In-process set of run ids with a live worker. The execution model is an
+# in-process asyncio worker, so the only authoritative concurrency guard is
+# in-process too: a DB "running" status can be a zombie from a killed deploy.
+_EXECUTING: set[str] = set()
+
+
 @router.post("/runs/{run_id}/execute", status_code=202)
 async def execute_run(run_id: str, user: AuthUser = Depends(get_current_user),
                       settings: Settings = Depends(get_settings)):
-    """Run the workflow to completion in the background (in-process worker)."""
-    await _owned_run(run_id, user, settings)
+    """Run the workflow to completion in the background (in-process worker).
+
+    Idempotent: finished runs are a conflict, a run with a live worker returns
+    already_executing, and a stale (orphaned) pending/running run can always be
+    (re)started - this is the recovery path when the client's first execute call
+    failed after the run was created.
+    """
+    run = await _owned_run(run_id, user, settings)
+    if run["status"] in ("succeeded", "failed", "cancelled"):
+        raise conflict(f"run is already {run['status']}; create a new run")
+    if run_id in _EXECUTING:
+        return {"status": "already_executing", "run_id": run_id}
+    db = get_db(settings)
+    if run["status"] == "pending":
+        now = utcnow()
+        await db.update("workflow_runs", {"id": run_id},
+                        {"status": "running", "started_at": now, "updated_at": now})
+
+    _EXECUTING.add(run_id)
 
     async def _worker() -> None:
         try:
             await _orchestrator(settings).run_until_done(run_id)
         except Exception:
             pass  # failures are already recorded on the run/tasks/events honestly
+        finally:
+            _EXECUTING.discard(run_id)
 
     asyncio.create_task(_worker())
     return {"status": "executing", "run_id": run_id}

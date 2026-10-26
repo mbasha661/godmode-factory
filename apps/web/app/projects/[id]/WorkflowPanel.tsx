@@ -31,11 +31,29 @@ export default function WorkflowPanel({ projectId }: { projectId: string }) {
 
   async function createAndRun() {
     setBusy(true); setError("");
+    let runId: string | null = null;
     try {
       const { run } = await api.createRun(projectId);
-      await api.executeRun(run.id);
-      await refresh(run.id);
-      startPolling(run.id);
+      runId = run.id;
+      await api.executeRunWithRetry(run.id);
+    } catch (e) {
+      // The run may exist even if starting failed - show it and offer a retry
+      // instead of orphaning it silently in "pending".
+      setError(runId
+        ? `Run created but auto-start failed: ${(e as Error).message}`
+        : (e as Error).message);
+    } finally {
+      if (runId) { await refresh(runId); startPolling(runId); }
+      setBusy(false);
+    }
+  }
+
+  async function retryStart() {
+    if (!detail) return;
+    setBusy(true); setError("");
+    try {
+      await api.executeRunWithRetry(detail.run.id);
+      await refresh(detail.run.id);
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
 
@@ -53,6 +71,9 @@ export default function WorkflowPanel({ projectId }: { projectId: string }) {
           <button onClick={createAndRun} disabled={busy}>
             {busy ? "Starting..." : "Start 7-agent build run"}
           </button>
+          {detail && detail.run.status === "pending" && (
+            <button onClick={retryStart} className="secondary" disabled={busy}>Retry start</button>
+          )}
           {detail && !["succeeded", "failed", "cancelled"].includes(detail.run.status) && (
             <button onClick={cancel} className="secondary">Cancel</button>
           )}

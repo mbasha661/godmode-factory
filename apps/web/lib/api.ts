@@ -1,4 +1,6 @@
 import { getSupabase } from "./supabase";
+// @ts-ignore - plain-JS helper so node --test can cover it without a TS toolchain
+import { executeWithRetry } from "./startRun.mjs";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -39,6 +41,11 @@ export const api = {
   stepRun: (runId: string) => request<WorkflowRun>(`/api/runs/${runId}/step`, { method: "POST" }),
   executeRun: (runId: string) =>
     request<{ status: string }>(`/api/runs/${runId}/execute`, { method: "POST" }),
+  // Retries transient execute failures (cold starts, deploy cutovers) so a
+  // created run is never orphaned in "pending". Safe because execute is
+  // idempotent server-side ("already_executing" is success).
+  executeRunWithRetry: (runId: string): Promise<{ status: string }> =>
+    executeWithRetry(() => api.executeRun(runId)),
   cancelRun: (runId: string) => request<WorkflowRun>(`/api/runs/${runId}/cancel`, { method: "POST" }),
 };
 
