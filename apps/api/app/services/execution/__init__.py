@@ -173,7 +173,7 @@ class Executor:
             tooling = Executor(cpu_seconds=240, wall_seconds=240, max_file_mb=512)
             tool = tooling.run({}, [vpy, "-m", "pip", "install", "-q",
                                     "--disable-pip-version-check", "--only-binary", ":all:",
-                                    "pytest", "httpx"])
+                                    "pytest", "httpx<0.28"])
             if tool.exit_code != 0:
                 return ExecutionResult(command=tool.command, exit_code=tool.exit_code,
                                        stdout=tool.stdout,

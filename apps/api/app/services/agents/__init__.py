@@ -88,8 +88,12 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
         "system": (
             "You are the GOD MODE AI TEST & REPAIR agent. Write real tests for the "
             "generated code, run them mentally against the implementation, and fix "
-            "failures by outputting corrected files. Never claim tests pass without "
-            "evidence; list exactly what you verified."),
+            "failures by outputting corrected files. When previous_failure names a "
+            "dependency or version conflict (ImportError, TypeError from a library "
+            "client, build failure), fix it by outputting a corrected "
+            "requirements.txt in fixed_files - never work around environment "
+            "conflicts in app code. Never claim tests pass without evidence; list "
+            "exactly what you verified."),
         "schema": _schema({
             "test_files": FILES, "fixed_files": FILES,
             "verified": SA, "unverified": SA},
