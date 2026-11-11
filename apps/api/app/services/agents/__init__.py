@@ -42,7 +42,7 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
             "You are the GOD MODE AI ARCHITECT. Interpret the user request, write a "
             "requirements document, list assumptions and missing requirements, design "
             "the system architecture, choose technologies, and produce an ordered "
-            "implementation plan. Be concrete and buildable on a free tier."),
+            "implementation plan. Keep the entire design concise, under 500 words. Be concrete and buildable on a free tier."),
         "schema": _schema({
             "requirements": S, "assumptions": SA, "missing_requirements": SA,
             "architecture": S, "technologies": SA, "plan": SA},
@@ -52,7 +52,7 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
         "system": (
             "You are the GOD MODE AI UI DESIGNER. Given the architecture, define the "
             "user flows, page/component structure, and visual direction. Output a "
-            "component tree and per-page wireframe descriptions."),
+            "component tree and per-page wireframe descriptions. Keep the entire design under 300 words."),
         "schema": _schema({
             "user_flows": SA, "pages": SA, "component_tree": S, "visual_direction": S},
             ["user_flows", "pages", "component_tree"]),
@@ -60,8 +60,8 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
     "db_engineer": {
         "system": (
             "You are the GOD MODE AI DB ENGINEER. Given the architecture, design the "
-            "database schema and write runnable SQL migrations (PostgreSQL/Supabase), "
-            "including constraints, indexes and row-level-security policies."),
+            "database schema and write runnable SQL migrations for the database selected in the architecture, "
+            "including constraints and indexes. Include row-level security only when supported and required."),
         "schema": _schema({
             "tables": SA, "migrations": FILES, "rls_notes": S},
             ["tables", "migrations"]),
@@ -70,7 +70,7 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
         "system": (
             "You are the GOD MODE AI BACKEND DEVELOPER. Keep the implementation minimal (few small files). Implement the backend per the "
             "architecture and DB schema. Output complete runnable files only - no "
-            "placeholders, no TODO stubs."),
+            "placeholders, no TODO stubs. Output backend code, dependencies and startup README only. Do not output frontend or test files; other roles own those."),
         "schema": _schema({
             "files": FILES, "entrypoint": S, "notes": S},
             ["files", "entrypoint"]),
@@ -79,7 +79,7 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
         "system": (
             "You are the GOD MODE AI FRONTEND DEVELOPER. Keep the implementation minimal (few small files). Implement the frontend per "
             "the design and backend API. Output complete runnable files only - no "
-            "placeholders."),
+            "placeholders. Output frontend files only; do not repeat backend, tests or README."),
         "schema": _schema({
             "files": FILES, "entrypoint": S, "notes": S},
             ["files", "entrypoint"]),
@@ -87,7 +87,7 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
     "test_repair": {
         "system": (
             "You are the GOD MODE AI TEST & REPAIR agent. Write real tests for the "
-            "generated code, run them mentally against the implementation, and fix "
+            "generated code and fix "
             "failures by outputting corrected files. When previous_failure names a "
             "dependency or version conflict (ImportError, TypeError from a library "
             "client, build failure), fix it by outputting a corrected "
@@ -96,7 +96,7 @@ AGENT_SPECS: dict[str, dict[str, Any]] = {
             "found' or 'Could not find a version', the named package or version does "
             "not exist on PyPI - replace it in requirements.txt with the real package "
             "the code needs (for example bcrypt for password hashing). Never claim "
-            "tests pass without evidence; list exactly what you verified."),
+            "tests pass without evidence; list exactly what you verified. Use an autouse function-scoped fixture to create a fresh temporary database for EACH test. Patch the actual application DB path as well as APP_DB_PATH if it was read at import. If prior tests exist, repair their fixtures too rather than creating another suite sharing state."),
         "schema": _schema({
             "test_files": FILES, "fixed_files": FILES,
             "verified": SA, "unverified": SA},

@@ -313,10 +313,37 @@ class Orchestrator:
             if t["status"] == "succeeded" and t.get("output"):
                 out = {k: v for k, v in t["output"].items() if not k.startswith("_")}
                 upstream[t["agent_role"]] = out
+        # Route complete relevant artifacts, not every prior design and duplicate file.
+        role = task["agent_role"]
+        relevant = {
+            "frontend_dev": {"ui_designer", "backend_dev"},
+            "test_repair": {"backend_dev", "frontend_dev"},
+            "devops": {"backend_dev", "frontend_dev", "test_repair"},
+        }.get(role)
+        if relevant is not None:
+            upstream = {k:v for k,v in upstream.items() if k in relevant}
+        if role == "frontend_dev" and "backend_dev" in upstream:
+            backend = dict(upstream["backend_dev"])
+            backend["files"] = [f for f in backend.get("files", [])
+                if not f["path"].startswith(("static/", "tests/", "test_"))]
+            upstream["backend_dev"] = backend
+        if role == "test_repair":
+            # The real executor tests backend endpoints. Give that role complete
+            # Python source and dependencies; HTML is tested separately by UI review.
+            merged = {}
+            for data in upstream.values():
+                for f in data.get("files", []):
+                    if f["path"].endswith(".py") or f["path"].endswith("requirements.txt"):
+                        merged[f["path"]] = f
+            previous = task.get("output") or {}
+            for field in ("test_files", "fixed_files"):
+                for f in previous.get(field, []):
+                    merged[f["path"]] = f
+            upstream = {"backend_dev": {"files": list(merged.values())}}
         task_input = {"goal": goal, "upstream_outputs": upstream}
         if task.get("attempts") and task.get("error_summary"):
             task_input["previous_failure"] = task["error_summary"]
-            if task.get("output"):
+            if task.get("output") and role != "test_repair":
                 task_input["previous_attempt"] = task["output"]
         await self.db.update("tasks", {"id": task["id"]}, {
             "status": "running", "started_at": utcnow(), "input": task_input,
