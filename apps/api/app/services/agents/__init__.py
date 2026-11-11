@@ -119,9 +119,11 @@ async def execute_agent(role: str, task_input: dict[str, Any], provider: AIProvi
     if spec is None:
         raise AgentOutputError(f"unknown agent role: {role}")
     prompt = (
-        f"Task input (JSON):\n{json.dumps(task_input, indent=2)[:12000]}\n\n"
+        f"Task input (JSON):\n{json.dumps(task_input, separators=(',', ':'))}\n\n"
         "Respond with a single JSON object matching the required schema. No prose outside the JSON."
     )
+    if len(prompt) > 160000:
+        raise AgentOutputError(f"{role} context exceeds 160000 characters; refusing to truncate source code")
     response = await generate_with_retry(
         provider, prompt, system=spec["system"], json_schema=spec["schema"],
         max_output_tokens=ROLE_MAX_OUTPUT_TOKENS.get(role, 8192), max_retries=3)

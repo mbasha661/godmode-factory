@@ -77,7 +77,7 @@ def _failure_summary(stdout: str, stderr: str, limit: int = 1200) -> str:
         parts.append("\n".join(key[-12:]))
     parts.append("--- output tail ---")
     parts.append("\n".join(lines[-12:]))
-    return "\n".join(parts)[-limit:]
+    return "\n".join(parts)[:limit]
 
 
 def _sanitize_requirements(files: dict[str, str]) -> dict[str, str]:

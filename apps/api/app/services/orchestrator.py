@@ -159,6 +159,7 @@ class Orchestrator:
             "status": "running", "created_at": utcnow(),
         })
         started = datetime.now(timezone.utc)
+        output = None
         try:
             if self._agent_executor is not None:
                 output = await self._agent_executor(task["agent_role"], task["input"], provider)
@@ -183,6 +184,9 @@ class Orchestrator:
         except ProviderError as exc:
             await self._fail_task(run, task, agent_run, exc.category.value, str(exc))
         except Exception as exc:  # noqa: BLE001 - recorded, never hidden
+            if output is not None:
+                await self.db.update("agent_runs", {"id": agent_run["id"]}, {"output": output})
+                await self.db.update("tasks", {"id": task["id"]}, {"output": output})
             await self._fail_task(run, task, agent_run, "code_execution_failure", str(exc)[:500])
 
     async def _run_real_tests(self, run: dict, output: dict) -> dict:
@@ -199,9 +203,19 @@ class Orchestrator:
                 for f in (t["output"].get("files") or []):
                     if isinstance(f, dict) and f.get("path") and f.get("content") is not None:
                         files[f["path"]] = f["content"]
+        # Keep patches from previous repair attempts, then apply the newest output.
+        previous_patches = {}
+        for t in tasks:
+            if t["agent_role"] == "test_repair" and t.get("output"):
+                for key in ("test_files", "fixed_files"):
+                    for f in (t["output"].get(key) or []):
+                        files[f["path"]] = f["content"]
+                        previous_patches[f["path"]] = f["content"]
         for key in ("test_files", "fixed_files"):
             for f in (output.get(key) or []):
                 files[f["path"]] = f["content"]
+                previous_patches[f["path"]] = f["content"]
+        output["fixed_files"] = [{"path": p, "content": c} for p, c in previous_patches.items()]
         has_pytest = any(p.endswith(".py") and "test" in p for p in files)
         if not has_pytest:
             output["executor_result"] = {
@@ -298,10 +312,12 @@ class Orchestrator:
         for t in tasks:
             if t["status"] == "succeeded" and t.get("output"):
                 out = {k: v for k, v in t["output"].items() if not k.startswith("_")}
-                upstream[t["agent_role"]] = json.dumps(out)[:6000]
+                upstream[t["agent_role"]] = out
         task_input = {"goal": goal, "upstream_outputs": upstream}
         if task.get("attempts") and task.get("error_summary"):
             task_input["previous_failure"] = task["error_summary"]
+            if task.get("output"):
+                task_input["previous_attempt"] = task["output"]
         await self.db.update("tasks", {"id": task["id"]}, {
             "status": "running", "started_at": utcnow(), "input": task_input,
             "updated_at": utcnow(),
