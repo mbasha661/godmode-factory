@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
 import { api, Project } from "@/lib/api";
+import { ThemeToggle } from "../theme";
+import ProjectStatus from "./ProjectStatus";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -11,6 +13,7 @@ export default function DashboardPage() {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
+  const [runCounts, setRunCounts] = useState<{ active: number; completed: number; failed: number } | null>(null);
 
   useEffect(() => {
     getSupabase().auth.getSession().then(async ({ data }) => {
@@ -19,6 +22,14 @@ export default function DashboardPage() {
       try {
         const [p, s] = await Promise.all([api.listProjects(), api.systemStatus()]);
         setProjects(p); setStatus(s);
+        const { data: runs } = await getSupabase().from("workflow_runs").select("status");
+        const counts = { active: 0, completed: 0, failed: 0 };
+        (runs || []).forEach((r) => {
+          if (r.status === "running" || r.status === "executing" || r.status === "pending") counts.active++;
+          else if (r.status === "succeeded" || r.status === "completed") counts.completed++;
+          else if (r.status === "failed" || r.status === "cancelled") counts.failed++;
+        });
+        setRunCounts(counts);
       } catch (e) { setError((e as Error).message); }
     });
   }, [router]);
@@ -36,6 +47,7 @@ export default function DashboardPage() {
         <span className="brand">GOD MODE FACTORY</span>
         <span className="row">
           <span className="muted">{email}</span>
+          <ThemeToggle />
           <button className="btn secondary" onClick={signOut}>Sign out</button>
         </span>
       </nav>
@@ -43,9 +55,9 @@ export default function DashboardPage() {
         {error && <p className="error" role="alert">{error}</p>}
         <div className="grid cols-4">
           <div className="card"><div className="stat">{projects ? projects.length : "-"}</div><div className="muted">Projects</div></div>
-          <div className="card"><div className="stat">0</div><div className="muted">Active workflows</div></div>
-          <div className="card"><div className="stat">0</div><div className="muted">Completed</div></div>
-          <div className="card"><div className="stat">0</div><div className="muted">Failed</div></div>
+          <div className="card"><div className="stat">{runCounts ? runCounts.active : "-"}</div><div className="muted">Active workflows</div></div>
+          <div className="card"><div className="stat">{runCounts ? runCounts.completed : "-"}</div><div className="muted">Completed</div></div>
+          <div className="card"><div className="stat">{runCounts ? runCounts.failed : "-"}</div><div className="muted">Failed</div></div>
         </div>
         <div className="card">
           <div className="row">
@@ -72,13 +84,7 @@ export default function DashboardPage() {
           {projects === null && <p className="muted">Loading...</p>}
           {projects?.length === 0 && <p className="muted" style={{ marginTop: 8 }}>No projects yet. Create one to start a build.</p>}
           {projects?.map((p) => (
-            <div className="list-item" key={p.id}>
-              <div className="row">
-                <Link href={`/projects/${p.id}`}><strong>{p.name}</strong></Link>
-                <span className="badge">{p.project_type}</span>
-              </div>
-              <p className="muted" style={{ marginTop: 4 }}>{p.description || "No description"}</p>
-            </div>
+            <ProjectStatus key={p.id} project={p} />
           ))}
         </div>
       </main>

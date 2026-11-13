@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, Project } from "@/lib/api";
 import WorkflowPanel from "./WorkflowPanel";
+import { ThemeToggle } from "../../theme";
 
 export default function ProjectPage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -27,7 +28,10 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
       <div className="card">
         <div className="row">
           <h1>{project.name}</h1>
-          <span className="badge">{project.project_type}</span>
+          <span className="row" style={{ gap: 6 }}>
+            <span className="badge">{project.project_type}</span>
+            <ThemeToggle />
+          </span>
         </div>
         <p style={{ margin: "12px 0" }}>{project.description}</p>
         <p className="muted">Status: {project.status} - Created {new Date(project.created_at).toLocaleString()}</p>
